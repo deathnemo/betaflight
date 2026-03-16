@@ -152,7 +152,14 @@ static uint8_t sbusFrameStatus(rxRuntimeState_t *rxRuntimeState)
     const uint8_t frameStatus = sbusChannelsDecode(rxRuntimeState, &sbusFrameData->frame.frame.channels);
 
     if (!(frameStatus & (RX_FRAME_FAILSAFE | RX_FRAME_DROPPED))) {
-        rxRuntimeState->lastRcFrameTimeUs = sbusFrameData->startAtUs;
+        timeUs_t nowUs = sbusFrameData->startAtUs;
+        if (rxRuntimeState->lastRcFrameTimeUs != 0) {
+            timeDelta_t deltaUs = cmpTimeUs(nowUs, rxRuntimeState->lastRcFrameTimeUs);
+            if (deltaUs > 0) {
+                rxSetPacketsPerSecond((uint16_t)((1000000U + deltaUs/2) / deltaUs));
+            }
+        }
+        rxRuntimeState->lastRcFrameTimeUs = nowUs;
     }
 
     return frameStatus;
@@ -205,6 +212,13 @@ bool sbusInit(const rxConfig_t *rxConfig, rxRuntimeState_t *rxRuntimeState)
     if (rxConfig->rssi_src_frame_errors) {
         rssiSource = RSSI_SOURCE_FRAME_ERRORS;
     }
+
+#ifdef USE_RX_LINK_QUALITY_INFO
+    if (linkQualitySource == LQ_SOURCE_NONE) {
+        linkQualitySource = LQ_SOURCE_RX_PROTOCOL_SBUS;
+    }
+    rxSetPacketsPerSecond(0);
+#endif
 
 #ifdef USE_TELEMETRY
     if (portShared) {

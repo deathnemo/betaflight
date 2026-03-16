@@ -101,6 +101,7 @@ static pt1Filter_t rsnrFilter;
 #ifdef USE_RX_LINK_QUALITY_INFO
 static uint16_t linkQuality = 0;
 static uint8_t rfMode = 0;
+static uint16_t packetsPerSecond = 0;
 #endif
 
 #ifdef USE_RX_LINK_UPLINK_POWER
@@ -453,6 +454,11 @@ void rxSetRfMode(uint8_t rfModeValue)
 {
     rfMode = rfModeValue;
 }
+
+void rxSetPacketsPerSecond(uint16_t packetsPerSecondValue)
+{
+    packetsPerSecond = packetsPerSecondValue;
+}
 #endif
 
 static void setLinkQuality(bool validFrame, timeDelta_t currentDeltaTimeUs)
@@ -462,7 +468,7 @@ static void setLinkQuality(bool validFrame, timeDelta_t currentDeltaTimeUs)
     static timeDelta_t resampleTimeUs = 0;
 
 #ifdef USE_RX_LINK_QUALITY_INFO
-    if (linkQualitySource == LQ_SOURCE_NONE) {
+    if (linkQualitySource == LQ_SOURCE_NONE || linkQualitySource == LQ_SOURCE_RX_PROTOCOL_SBUS) {
         // calculate new sample mean
         linkQuality = updateLinkQualitySamples(validFrame ? LINK_QUALITY_MAX_VALUE : 0);
     }
@@ -1014,6 +1020,11 @@ uint8_t rxGetRfMode(void)
 uint16_t rxGetLinkQualityPercent(void)
 {
     return (linkQualitySource == LQ_SOURCE_NONE) ? scaleRange(linkQuality, 0, LINK_QUALITY_MAX_VALUE, 0, 100) : linkQuality;
+}
+
+uint16_t rxGetPacketsPerSecond(void)
+{
+    return packetsPerSecond;
 }
 #endif
 

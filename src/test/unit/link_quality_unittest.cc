@@ -344,21 +344,60 @@ TEST(LQTest, TestElementLQ_PROTOCOL_CRSF_VALUES)
     // crsf setLinkQualityDirect 0-300;
 
     for (uint8_t x = 0; x <= 99; x++) {
-        for (uint8_t m = 0; m <= 4; m++) {
+        for (uint16_t pps = 0; pps <= 120; pps += 30) {
             // when x scaled
             setLinkQualityDirect(x);
-            rxSetRfMode(m);
+            rxSetPacketsPerSecond(pps);
             // then rxGetLinkQuality Osd should be x
-            // and RfMode should be m
+            // and packets per second should be pps
             simulationTime += 100000;
             while (osdUpdateCheck(simulationTime, 0)) {
                 osdUpdate(simulationTime);
                 simulationTime += 10;
             }
-            displayPortTestBufferSubstring(8, 1, "%c%1d:%2d", SYM_LINK_QUALITY, m, x);
+            displayPortTestBufferSubstring(8, 1, "%c%dT%d", SYM_LINK_QUALITY, pps, x);
         }
     }
 }
+
+/*
+ * Tests the OSD_LINK_QUALITY element LQ RX_PROTOCOL_SBUS.
+ */
+TEST(LQTest, TestElementLQ_PROTOCOL_SBUS_VALUES)
+{
+    // given
+    linkQualitySource = LQ_SOURCE_RX_PROTOCOL_SBUS;
+
+    osdElementConfigMutable()->item_pos[OSD_LINK_QUALITY] = OSD_POS(8, 1) | OSD_PROFILE_1_FLAG;
+    osdConfigMutable()->link_quality_alarm = 0;
+
+    osdAnalyzeActiveElements();
+
+    simulationTime += 1000000;
+    while (osdUpdateCheck(simulationTime, 0)) {
+        osdUpdate(simulationTime);
+        simulationTime += 10;
+    }
+
+    // sbus setLinkQualityDirect 0-300;
+
+    for (uint8_t x = 0; x <= 99; x++) {
+        for (uint16_t pps = 0; pps <= 120; pps += 30) {
+            // when x scaled
+            setLinkQualityDirect(x);
+            rxSetPacketsPerSecond(pps);
+            // then rxGetLinkQuality Osd should be x
+            // and packets per second should be pps
+            simulationTime += 100000;
+            while (osdUpdateCheck(simulationTime, 0)) {
+                osdUpdate(simulationTime);
+                simulationTime += 10;
+            }
+            displayPortTestBufferSubstring(8, 1, "%c%dT%d", SYM_LINK_QUALITY, pps, x);
+        }
+    }
+}
+
 /*
  * Tests the LQ Alarms
  *

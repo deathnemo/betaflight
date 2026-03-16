@@ -1334,10 +1334,10 @@ static void osdElementLinkQuality(osdElementParms_t *element)
         element->attr = DISPLAYPORT_SEVERITY_CRITICAL;
     }
 
-    if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF) { // 0-99
+    if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF || linkQualitySource == LQ_SOURCE_RX_PROTOCOL_SBUS) { // 0-100
         osdLinkQuality = rxGetLinkQuality();
-        const uint8_t osdRfMode = rxGetRfMode();
-        tfp_sprintf(element->buff, "%c%1d:%2d", SYM_LINK_QUALITY, osdRfMode, osdLinkQuality);
+        const uint16_t packetsPerSecond = rxGetPacketsPerSecond();
+        tfp_sprintf(element->buff, "%c%dT%d", SYM_LINK_QUALITY, packetsPerSecond, osdLinkQuality);
     } else if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_GHST) { // 0-100
         osdLinkQuality = rxGetLinkQuality();
         tfp_sprintf(element->buff, "%c%2d", SYM_LINK_QUALITY, osdLinkQuality);
@@ -1808,11 +1808,11 @@ static void osdElementWarnings(osdElementParms_t *element)
 #ifdef USE_RX_LINK_QUALITY_INFO
             // replicate the LQ functionality without the special font symbols
             uint16_t osdLinkQuality = 0;
-            if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF) { // 0-99
+            if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF || linkQualitySource == LQ_SOURCE_RX_PROTOCOL_SBUS) { // 0-100
                 osdLinkQuality = rxGetLinkQuality();
 #ifdef USE_RX_RSSI_DBM
-                const uint8_t osdRfMode = rxGetRfMode();
-                tfp_sprintf(element->buff, "LQ %2d:%03d %3d", osdRfMode, osdLinkQuality, getRssiDbm());
+                const uint16_t packetsPerSecond = rxGetPacketsPerSecond();
+                tfp_sprintf(element->buff, "LQ %dT%03d %3d", packetsPerSecond, osdLinkQuality, getRssiDbm());
             } else if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_GHST) { // 0-100
                 osdLinkQuality = rxGetLinkQuality();
                 tfp_sprintf(element->buff, "LQ %03d %3d", osdLinkQuality, getRssiDbm());

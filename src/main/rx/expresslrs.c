@@ -1051,6 +1051,7 @@ static void handleConnectionStateUpdate(const uint32_t timeStampMs)
 #endif
 #ifdef USE_RX_LINK_QUALITY_INFO
         setLinkQualityDirect(0);
+        rxSetPacketsPerSecond(0);
 #endif
     }
 
@@ -1122,6 +1123,8 @@ static void handleLinkStatsUpdate(const uint32_t timeStampMs)
 #endif
 #ifdef USE_RX_LINK_QUALITY_INFO
             setLinkQualityDirect(receiver.uplinkLQ);
+            const uint16_t expectedPacketsPerSecond = rateEnumToHz(receiver.modParams->enumRate);
+            rxSetPacketsPerSecond((expectedPacketsPerSecond * receiver.uplinkLQ + 50) / 100);
 #endif
 #ifdef USE_RX_LINK_UPLINK_POWER
             rxSetUplinkTxPwrMw(txPowerIndexToValue(txPower));
@@ -1136,6 +1139,7 @@ static void handleLinkStatsUpdate(const uint32_t timeStampMs)
 #endif
 #ifdef USE_RX_LINK_QUALITY_INFO
             setLinkQualityDirect(0);
+            rxSetPacketsPerSecond(0);
 #endif
         }
     }

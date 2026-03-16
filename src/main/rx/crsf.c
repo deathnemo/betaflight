@@ -64,6 +64,10 @@
 #define CRSF_LINK_STATUS_UPDATE_TIMEOUT_US  250000 // 250ms, 4 Hz mode 1 telemetry
 
 #define CRSF_FRAME_ERROR_COUNT_THRESHOLD    3
+#define CRSF_LQ_BIN_COUNT                   10
+#define CRSF_LQ_BIN_DURATION_US             100000
+#define CRSF_LQ_DEFAULT_EXPECTED_PPS        50
+#define CRSF_LQ_PUBLISH_INTERVAL_US         500000
 
 STATIC_UNIT_TESTED bool crsfFrameDone = false;
 STATIC_UNIT_TESTED crsfFrame_t crsfFrame;
@@ -225,6 +229,132 @@ typedef struct crsfPayloadLinkstatisticsTx_s {
 
 static timeUs_t lastLinkStatisticsFrameUs;
 
+#ifdef USE_RX_LINK_QUALITY_INFO
+typedef struct crsfLinkQualityTracker_s {
+    uint8_t bins[CRSF_LQ_BIN_COUNT];
+    uint16_t packetSum;
+    uint16_t expectedPacketsPerSecond;
+    uint8_t binIndex;
+    timeUs_t currentBinStartUs;
+    timeUs_t lastPublishUs;
+    bool initialized;
+} crsfLinkQualityTracker_t;
+
+static crsfLinkQualityTracker_t crsfLinkQualityTracker;
+
+static uint16_t crsfGetExpectedPacketsPerSecondFromRfMode(uint8_t rfMode)
+{
+    // ExpressLRS 3.x RFMD indexes (values not listed fall back to default).
+    switch (rfMode) {
+    case 1:
+        return 25;
+    case 2:
+        return 50;
+    case 3:
+    case 4:
+        return 100;
+    case 5:
+        return 150;
+    case 6:
+        return 200;
+    case 7:
+    case 10:
+        return 250;
+    case 8:
+        return 333;
+    case 9:
+    case 11:
+    case 12:
+    case 16:
+        return 500;
+    case 13:
+    case 19:
+        return 1000;
+    case 14:
+        return 50;
+    default:
+        return CRSF_LQ_DEFAULT_EXPECTED_PPS;
+    }
+}
+
+static void crsfLinkQualityInit(timeUs_t nowUs)
+{
+    memset(&crsfLinkQualityTracker, 0, sizeof(crsfLinkQualityTracker));
+    crsfLinkQualityTracker.currentBinStartUs = nowUs;
+    crsfLinkQualityTracker.lastPublishUs = nowUs - CRSF_LQ_PUBLISH_INTERVAL_US;
+    crsfLinkQualityTracker.expectedPacketsPerSecond = CRSF_LQ_DEFAULT_EXPECTED_PPS;
+    crsfLinkQualityTracker.initialized = true;
+}
+
+static void crsfLinkQualityAdvanceWindow(timeUs_t nowUs)
+{
+    if (!crsfLinkQualityTracker.initialized) {
+        crsfLinkQualityInit(nowUs);
+        return;
+    }
+
+    const timeDelta_t elapsedUs = cmpTimeUs(nowUs, crsfLinkQualityTracker.currentBinStartUs);
+    if (elapsedUs < CRSF_LQ_BIN_DURATION_US) {
+        return;
+    }
+
+    const uint32_t binsToAdvance = elapsedUs / CRSF_LQ_BIN_DURATION_US;
+    if (binsToAdvance >= CRSF_LQ_BIN_COUNT) {
+        memset(crsfLinkQualityTracker.bins, 0, sizeof(crsfLinkQualityTracker.bins));
+        crsfLinkQualityTracker.packetSum = 0;
+        crsfLinkQualityTracker.binIndex = 0;
+        crsfLinkQualityTracker.currentBinStartUs = nowUs - (elapsedUs % CRSF_LQ_BIN_DURATION_US);
+        return;
+    }
+
+    for (uint32_t i = 0; i < binsToAdvance; i++) {
+        crsfLinkQualityTracker.binIndex = (crsfLinkQualityTracker.binIndex + 1) % CRSF_LQ_BIN_COUNT;
+        crsfLinkQualityTracker.packetSum -= crsfLinkQualityTracker.bins[crsfLinkQualityTracker.binIndex];
+        crsfLinkQualityTracker.bins[crsfLinkQualityTracker.binIndex] = 0;
+    }
+    crsfLinkQualityTracker.currentBinStartUs += binsToAdvance * CRSF_LQ_BIN_DURATION_US;
+}
+
+static void crsfLinkQualityRecordValidPacket(timeUs_t nowUs)
+{
+    crsfLinkQualityAdvanceWindow(nowUs);
+
+    uint8_t *const currentBinCount = &crsfLinkQualityTracker.bins[crsfLinkQualityTracker.binIndex];
+    if (*currentBinCount < UINT8_MAX) {
+        (*currentBinCount)++;
+        crsfLinkQualityTracker.packetSum++;
+    }
+}
+
+static void crsfLinkQualityUpdateAndPublish(timeUs_t nowUs)
+{
+    if (linkQualitySource != LQ_SOURCE_RX_PROTOCOL_CRSF) {
+        return;
+    }
+
+    crsfLinkQualityAdvanceWindow(nowUs);
+
+    const uint16_t packetsPerSecond = crsfLinkQualityTracker.packetSum;
+    uint16_t expectedPacketsPerSecond = crsfLinkQualityTracker.expectedPacketsPerSecond;
+    if (expectedPacketsPerSecond == 0) {
+        expectedPacketsPerSecond = 1;
+    }
+
+    uint16_t linkQuality = (packetsPerSecond * 100U + expectedPacketsPerSecond / 2U) / expectedPacketsPerSecond;
+    if (linkQuality > 100U) {
+        linkQuality = 100U;
+    }
+
+    if (cmpTimeUs(nowUs, crsfLinkQualityTracker.lastPublishUs) < CRSF_LQ_PUBLISH_INTERVAL_US) {
+        return;
+    }
+
+    crsfLinkQualityTracker.lastPublishUs = nowUs;
+    setLinkQualityDirect(linkQuality);
+    rxSetPacketsPerSecond(packetsPerSecond);
+}
+#endif
+
 static void handleCrsfLinkStatisticsFrame(const crsfLinkStatistics_t* statsPtr, timeUs_t currentTimeUs)
 {
     const crsfLinkStatistics_t stats = *statsPtr;
@@ -245,8 +375,8 @@ static void handleCrsfLinkStatisticsFrame(const crsfLinkStatistics_t* statsPtr, 
 
 #ifdef USE_RX_LINK_QUALITY_INFO
     if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF) {
-        setLinkQualityDirect(stats.uplink_Link_quality);
         rxSetRfMode(stats.rf_Mode);
+        crsfLinkQualityTracker.expectedPacketsPerSecond = crsfGetExpectedPacketsPerSecondFromRfMode(stats.rf_Mode);
     }
 #endif
 
@@ -288,9 +418,10 @@ static void handleCrsfLinkStatisticsTxFrame(const crsfLinkStatisticsTx_t* statsP
 #endif
 
 #ifdef USE_RX_LINK_QUALITY_INFO
-    if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF) {
-        setLinkQualityDirect(stats.uplink_Link_quality);
+    if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF && stats.uplink_FPS > 0) {
+        crsfLinkQualityTracker.expectedPacketsPerSecond = stats.uplink_FPS / 10;
     }
+    UNUSED(stats.uplink_Link_quality);
 #endif
 
     DEBUG_SET(DEBUG_CRSF_LINK_STATISTICS_UPLINK, 0, stats.uplink_RSSI);
@@ -315,11 +446,6 @@ static void crsfCheckRssi(uint32_t currentTimeUs)
             setRsnrDirect(CRSF_SNR_MIN);
 #endif
         }
-#ifdef USE_RX_LINK_QUALITY_INFO
-        if (linkQualitySource == LQ_SOURCE_RX_PROTOCOL_CRSF) {
-            setLinkQualityDirect(0);
-        }
-#endif
     }
 }
 #endif
@@ -434,8 +560,7 @@ STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c, void *data)
 
                 case CRSF_FRAMETYPE_LINK_STATISTICS: {
                     // if to FC and 10 bytes + CRSF_FRAME_ORIGIN_DEST_SIZE
-                    if ((rssiSource == RSSI_SOURCE_RX_PROTOCOL_CRSF) &&
-                        (crsfFrame.frame.deviceAddress == CRSF_ADDRESS_FLIGHT_CONTROLLER) &&
+                    if ((crsfFrame.frame.deviceAddress == CRSF_ADDRESS_FLIGHT_CONTROLLER) &&
                         (crsfFrame.frame.frameLength == CRSF_FRAME_ORIGIN_DEST_SIZE + CRSF_FRAME_LINK_STATISTICS_PAYLOAD_SIZE)) {
                         const crsfLinkStatistics_t* statsFrame = (const crsfLinkStatistics_t*)&crsfFrame.frame.payload;
                         handleCrsfLinkStatisticsFrame(statsFrame, currentTimeUs);
@@ -447,8 +572,7 @@ STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c, void *data)
                     break;
                 }
                 case CRSF_FRAMETYPE_LINK_STATISTICS_TX: {
-                    if ((rssiSource == RSSI_SOURCE_RX_PROTOCOL_CRSF) &&
-                        (crsfFrame.frame.deviceAddress == CRSF_ADDRESS_FLIGHT_CONTROLLER) &&
+                    if ((crsfFrame.frame.deviceAddress == CRSF_ADDRESS_FLIGHT_CONTROLLER) &&
                         (crsfFrame.frame.frameLength == CRSF_FRAME_ORIGIN_DEST_SIZE + CRSF_FRAME_LINK_STATISTICS_TX_PAYLOAD_SIZE)) {
                         const crsfLinkStatisticsTx_t* statsFrame = (const crsfLinkStatisticsTx_t*)&crsfFrame.frame.payload;
                         handleCrsfLinkStatisticsTxFrame(statsFrame, currentTimeUs);
@@ -491,9 +615,11 @@ STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c, void *data)
 STATIC_UNIT_TESTED uint8_t crsfFrameStatus(rxRuntimeState_t *rxRuntimeState)
 {
     UNUSED(rxRuntimeState);
+    const timeUs_t currentTimeUs = micros();
+    bool validRcPacketReceived = false;
 
 #if defined(USE_CRSF_LINK_STATISTICS)
-    crsfCheckRssi(micros());
+    crsfCheckRssi(currentTimeUs);
 #endif
     if (crsfFrameDone) {
         crsfFrameDone = false;
@@ -580,6 +706,17 @@ STATIC_UNIT_TESTED uint8_t crsfFrameStatus(rxRuntimeState_t *rxRuntimeState)
                 bitsMerged -= channelBits;
             }
         }
+        validRcPacketReceived = true;
+    }
+
+#if defined(USE_RX_LINK_QUALITY_INFO) && defined(USE_CRSF_LINK_STATISTICS)
+    if (validRcPacketReceived) {
+        crsfLinkQualityRecordValidPacket(currentTimeUs);
+    }
+    crsfLinkQualityUpdateAndPublish(currentTimeUs);
+#endif
+
+    if (validRcPacketReceived) {
         return RX_FRAME_COMPLETE;
     }
     return RX_FRAME_PENDING;
@@ -667,6 +804,10 @@ bool crsfRxInit(const rxConfig_t *rxConfig, rxRuntimeState_t *rxRuntimeState)
     if (linkQualitySource == LQ_SOURCE_NONE) {
         linkQualitySource = LQ_SOURCE_RX_PROTOCOL_CRSF;
     }
+#if defined(USE_CRSF_LINK_STATISTICS)
+    crsfLinkQualityInit(micros());
+#endif
+    rxSetPacketsPerSecond(0);
 #endif
 
     return serialPort != NULL;

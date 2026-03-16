@@ -166,6 +166,7 @@ typedef enum {
     LQ_SOURCE_NONE = 0,
     LQ_SOURCE_RX_PROTOCOL_CRSF,
     LQ_SOURCE_RX_PROTOCOL_GHST,
+    LQ_SOURCE_RX_PROTOCOL_SBUS,
     LQ_SOURCE_RX_PROTOCOL_MAVLINK,
 } linkQualitySource_e;
 
@@ -200,6 +201,8 @@ bool isRssiConfigured(void);
 uint16_t rxGetLinkQuality(void);
 void setLinkQualityDirect(uint16_t linkqualityValue);
 uint16_t rxGetLinkQualityPercent(void);
+void rxSetPacketsPerSecond(uint16_t packetsPerSecondValue);
+uint16_t rxGetPacketsPerSecond(void);
 
 #ifdef USE_RX_RSSI_DBM
 int16_t getRssiDbm(void);
