@@ -41,8 +41,10 @@ DEBUG     ?=
 # releases should not be built with this flag as it does not disable pwm output
 DEBUG_HARDFAULTS ?=
 
-# Serial port/Device for flashing
+# Serial port/Device for flashing (pass SERIAL_DEVICE=/dev/ttyS4 or COM5 via wrapper scripts)
 SERIAL_DEVICE   ?= $(firstword $(wildcard /dev/ttyACM*) $(firstword $(wildcard /dev/ttyUSB*) no-port-found))
+# STM32 USB DFU in ROM (default); override if your probe reports another id (dfu-util -l)
+DFU_USB_ID      ?= 0483:df11
 
 # Flash size (KB).  Some low-end chips actually have more flash than advertised, use this to override.
 FLASH_SIZE ?=
@@ -139,6 +141,7 @@ OBJDUMP      = $(ARM_SDK_PREFIX)objdump
 READELF      = $(ARM_SDK_PREFIX)readelf
 SIZE         = $(ARM_SDK_PREFIX)size
 DFUSE-PACK  := src/utils/dfuse-pack.py
+MSP_REBOOT_BL := $(ROOT)/scripts/msp-reboot-bootloader.py
 
 # Preprocessor helpers (generic .h parsing)
 include $(MAKE_SCRIPT_DIR)/preprocess.mk
@@ -632,12 +635,12 @@ tty_flash:
 ## dfu_flash         : flash firmware (.bin) onto flight controller via a DFU mode
 dfu_flash:
 ifneq (no-port-found,$(SERIAL_DEVICE))
-	# potentially this is because the MCU already is in DFU mode, try anyway
-	$(V0) echo -n 'R' > $(SERIAL_DEVICE)
-	$(V0) sleep 1
+	@echo "MSP reboot to DFU via $(SERIAL_DEVICE)" "$(STDOUT)"
+	$(V1) $(PYTHON) $(MSP_REBOOT_BL) $(SERIAL_DEVICE)
+	$(V0) sleep 2
 endif
 	$(V0) $(MAKE) $(TARGET_DFU)
-	$(V0) dfu-util -a 0 -D $(TARGET_DFU) -s :leave
+	$(V0) dfu-util -d $(DFU_USB_ID) -w -a 0 -D $(TARGET_DFU) -s :leave
 
 st-flash_$(TARGET): $(TARGET_BIN)
 	$(V0) st-flash --reset write $< 0x08000000

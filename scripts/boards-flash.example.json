@@ -1,0 +1,27 @@
+{
+  "repoRoot": "",
+  "bash": "",
+  "boards": [
+    {
+      "name": "example-target-dfu",
+      "target": "MATEKF405",
+      "options": ["USE_GPS"],
+      "flash": "dfu",
+      "serialDevice": ""
+    },
+    {
+      "name": "example-config-serial",
+      "config": "CRAZYBEEF4FS",
+      "options": [],
+      "flash": "serial",
+      "comPort": 5
+    },
+    {
+      "name": "example-config-dfu",
+      "config": "SPEEDYBEEF405V3",
+      "options": [],
+      "flash": "dfu",
+      "comPort": 3
+    }
+  ]
+}

@@ -714,3 +714,7 @@ extern struct linker_symbol __config_end;
  #endif
 
 ******************************************************/
+
+#if defined(SPEEDYBEEF405V3_ESS_FEATURES)
+#include "config_strip.h"
+#endif

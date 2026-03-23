@@ -10,7 +10,64 @@
 import sys,struct,zlib,os
 import binascii
 from optparse import OptionParser
-from intelhex import IntelHex
+
+
+def _ihex_segments(path):
+    """
+    Разбор Intel HEX без пакета intelhex (PEP 668 / MSYS2 — pip в системный Python часто недоступен).
+    Записи 00 (data), 01 (EOF), 04 (extended linear address); остальное игнорируем.
+    """
+    mem = {}
+    upper = 0
+    with open(path, "r", encoding="ascii", errors="ignore") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line.startswith(":"):
+                continue
+            line = line[1:]
+            if len(line) < 8:
+                continue
+            try:
+                nbytes = int(line[0:2], 16)
+                addr_lo = int(line[2:6], 16)
+                rtype = int(line[6:8], 16)
+                need = 8 + nbytes * 2 + 2
+                if len(line) < need:
+                    continue
+                payload_hex = line[8 : 8 + nbytes * 2]
+            except ValueError:
+                continue
+            if rtype == 0x00:
+                try:
+                    chunk = bytes.fromhex(payload_hex)
+                except ValueError:
+                    continue
+                base = (upper + addr_lo) & 0xFFFFFFFF
+                for i, byte in enumerate(chunk):
+                    mem[(base + i) & 0xFFFFFFFF] = byte
+            elif rtype == 0x01:
+                break
+            elif rtype == 0x04 and nbytes == 2:
+                try:
+                    upper = int(payload_hex, 16) << 16
+                except ValueError:
+                    pass
+    if not mem:
+        return []
+    addrs = sorted(mem.keys())
+    target = []
+    seg_lo = addrs[0]
+    prev = addrs[0]
+    for a in addrs[1:]:
+        if a == prev + 1:
+            prev = a
+        else:
+            data = bytes(mem[i] for i in range(seg_lo, prev + 1))
+            target.append({"address": seg_lo & 0xFFFFFFFF, "data": data})
+            seg_lo = prev = a
+    data = bytes(mem[i] for i in range(seg_lo, prev + 1))
+    target.append({"address": seg_lo & 0xFFFFFFFF, "data": data})
+    return target
 
 DEFAULT_DEVICE="0x0483:0xdf11"
 DEFAULT_NAME=b'ST...'
@@ -129,15 +186,9 @@ if __name__=="__main__":
         target.append({ 'address': address, 'data': open(binfile,'rb').read() })
 
     if options.hexfiles:
-      for hex in options.hexfiles:
-        ih = IntelHex(hex)
-        for (address,end) in ih.segments():
-          try:
-            address = address & 0xFFFFFFFF
-          except ValueError:
-            print("Address %s invalid." % address)
-            sys.exit(1)
-          target.append({ 'address': address, 'data': ih.tobinstr(start=address, end=end-1)})
+      for hexfile in options.hexfiles:
+        for seg in _ihex_segments(hexfile):
+          target.append(seg)
 
     outfile = args[0]
     device = DEFAULT_DEVICE
